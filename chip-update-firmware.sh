@@ -13,6 +13,10 @@ FLASH_SCRIPT=./chip-fel-flash.sh
 WHAT=buildroot
 BRANCH=stable
 
+FW_DIR="$(pwd)/.firmware"
+FW_IMAGE_DIR="${FW_DIR}/images"
+FW_CACHE_DIR="${FW_DIR}/cache"
+
 function require_directory {
   if [[ ! -d "${1}" ]]; then
     mkdir -p "${1}"
@@ -26,40 +30,57 @@ function s3_md5 {
 
 function cache_download {
   local DEST_DIR=${1}
-  local SRC_URL=${2}
-  local FILE=${3}
+  local SYMLINK_DIR=${2}
+  local SRC_URL=${3}
+  local SRC_FILE=${4}
+  local DEST_FILE=${5}
 
-  if [[ -f "${DEST_DIR}/${FILE}" ]]; then
-    echo "${DEST_DIR}/${FILE} exists... comparing to ${SRC_URL}/${FILE}"
-    local S3_MD5=$(s3_md5 ${SRC_URL}/${FILE})
-    local MD5=$(md5sum ${DEST_DIR}/${FILE} | cut -d\  -f1)
+  if [[ -f "${DEST_DIR}/${DEST_FILE}" ]]; then
+    echo "${DEST_DIR}/${DEST_FILE} exists... comparing to ${SRC_URL}/${SRC_FILE}"
+
+    local S3_MD5=$(s3_md5 ${SRC_URL}/${SRC_FILE})
+    local MD5=$(md5sum ${DEST_DIR}/${DEST_FILE} | cut -d\  -f1)
+
     echo "MD5: ${MD5}"
     echo "S3_MD5: ${S3_MD5}"
+
     if [[ "${S3_MD5}" != "${MD5}" ]]; then
       echo "md5sum differs"
-      rm ${DEST_DIR}/${FILE}
-      if ! wget -P "${FW_IMAGE_DIR}" "${SRC_URL}/${FILE}"; then
-        echo "download of ${SRC_URL}/${FILE} failed!"
+      rm ${DEST_DIR}/${DEST_FILE}
+
+      if ! wget -O "${DEST_DIR}/${DEST_FILE}" "${SRC_URL}/${SRC_FILE}"; then
+        echo "download of ${SRC_URL}/${SRC_FILE} failed!"
         exit $?
       fi 
     else
       echo "file already downloaded"
     fi
   else
-    if ! wget -P "${FW_IMAGE_DIR}" "${SRC_URL}/${FILE}"; then
-      echo "download of ${SRC_URL}/${FILE} failed!"
+    if ! wget -O "${DEST_DIR}/${DEST_FILE}" "${SRC_URL}/${SRC_FILE}"; then
+      echo "download of ${SRC_URL}/${SRC_FILE} failed!"
       exit $?
-    fi 
+    fi
   fi
-}
-    
 
-while getopts "ufdpb:w:B:" opt; do
+  if [[ -e "$SYMLINK_DIR/${SRC_FILE}" ]]; then
+    rm ${SYMLINK_DIR}/${SRC_FILE}
+  fi
+  ln -s ${DEST_DIR}/${DEST_FILE} ${SYMLINK_DIR}/${SRC_FILE}
+}
+
+
+while getopts "cufdpb:w:B:" opt; do
   case $opt in
+    c)
+      echo "removing cache directory ${FW_CACHE_DIR}"
+      if [[ -d "$FW_CACHE_DIR" ]]; then
+        rm -rf ${FW_CACHE_DIR}
+      fi
+      ;;
     u)
-      echo "updating cache"
+      echo "updating image directory ${FW_IMAGE_DIR}"
       if [[ -d "$FW_IMAGE_DIR" ]]; then
-        rm -rf $FW_IMAGE_DIR
+        rm -rf ${FW_IMAGE_DIR}
       fi
       ;;
     f)
@@ -96,11 +117,8 @@ while getopts "ufdpb:w:B:" opt; do
 done
 
 
-FW_DIR="$(pwd)/.firmware"
-FW_IMAGE_DIR="${FW_DIR}/images"
 BASE_URL="http://opensource.nextthing.co/chip"
 S3_URL="${BASE_URL}/${WHAT}/${BRANCH}/latest"
-
 
 
 if [[ -z "$BUILD" ]]; then
@@ -139,13 +157,14 @@ echo "BR_URL=${BR_URL}"
 echo "BR_BUILD=${BR_BUILD}"
 
 require_directory "${FW_IMAGE_DIR}"
-cache_download "${FW_IMAGE_DIR}" ${ROOTFS_URL} rootfs.ubi
-cache_download "${FW_IMAGE_DIR}" ${BR_URL} sun5i-r8-chip.dtb
-cache_download "${FW_IMAGE_DIR}" ${BR_URL} sunxi-spl.bin
-cache_download "${FW_IMAGE_DIR}" ${BR_URL} sunxi-spl-with-ecc.bin
-cache_download "${FW_IMAGE_DIR}" ${BR_URL} uboot-env.bin
-cache_download "${FW_IMAGE_DIR}" ${BR_URL} zImage
-cache_download "${FW_IMAGE_DIR}" ${BR_URL} u-boot-dtb.bin
+require_directory "${FW_CACHE_DIR}"
+cache_download "${FW_CACHE_DIR}" "${FW_IMAGE_DIR}" ${ROOTFS_URL} rootfs.ubi rootfs.ubi-${WHAT}-${BRANCH}-${BUILD}
+cache_download "${FW_CACHE_DIR}" "${FW_IMAGE_DIR}" ${BR_URL} sun5i-r8-chip.dtb sun5i-r8-chip.dtb-${BR_BUILD}
+cache_download "${FW_CACHE_DIR}" "${FW_IMAGE_DIR}" ${BR_URL} sunxi-spl.bin sunxi-spl.bin-${BR_BUILD}
+cache_download "${FW_CACHE_DIR}" "${FW_IMAGE_DIR}" ${BR_URL} sunxi-spl-with-ecc.bin sunxi-spl-with-ecc.bin-${BR_BUILD}
+cache_download "${FW_CACHE_DIR}" "${FW_IMAGE_DIR}" ${BR_URL} uboot-env.bin uboot-env.bin-${BR_BUILD}
+cache_download "${FW_CACHE_DIR}" "${FW_IMAGE_DIR}" ${BR_URL} zImage zImage-${BR_BUILD}
+cache_download "${FW_CACHE_DIR}" "${FW_IMAGE_DIR}" ${BR_URL} u-boot-dtb.bin u-boot-dtb.bin-${BR_BUILD}
 
 BUILDROOT_OUTPUT_DIR="${FW_DIR}" ${FLASH_SCRIPT} ${FLASH_SCRIPT_OPTION} || echo "ERROR: could not flash" && exit 1
 
